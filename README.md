@@ -50,6 +50,7 @@ Write **better** and **safer conditions**. Pattern matching lets you express com
 - Pattern-match on **any data structure**: nested [Objects](#objects), [Arrays](#tuples-arrays), [Tuples](#tuples-arrays), [Sets](#pset-patterns), [Maps](#pmap-patterns) and all primitive types.
 - **Typesafe**, with helpful [type inference](#type-inference).
 - **Exhaustiveness checking** support, enforcing that you are matching every possible case with [`.exhaustive()`](#exhaustive).
+- **Collect every match** with [`matchEach`](#matcheach). Every clause that fits runs, and the expression returns those results in the order the clauses were written.
 - Use [patterns](#patterns) to **validate** the shape of your data with [`isMatching`](#ismatching).
 - **Expressive API**, with catch-all and type specific **wildcards**: [`P._`](#p_-wildcard), [`P.string`](#pstring-wildcard), [`P.number`](#pnumber-wildcard), etc.
 - Supports [**predicates**](#pwhen-patterns), [**unions**](#punion-patterns), [**intersections**](#pintersection-patterns) and [**exclusion**](#pnot-patterns) patterns for non-trivial cases.
@@ -433,6 +434,67 @@ function match<TInput, TOutput>(input: TInput): Match<TInput, TOutput>;
 - `input`
   - **Required**
   - the input value your patterns will be tested against.
+
+### `matchEach`
+
+```ts
+matchEach(value)
+  .with(pattern, handler)
+  .with(pattern, handler)
+  .tap((result) => {
+    // side effect for each result collected so far
+  })
+  .otherwise(defaultHandler);
+```
+
+`matchEach` uses the same builder as [`match`](#match): `.with` (one pattern, several patterns, or a pattern plus a guard), `.when`, `.returnType`, `.narrow`, `.otherwise`, `.exhaustive` and `.run`.
+
+Every `.with` and `.when` clause that matches runs, including when an earlier clause already matched. The expression returns a list of handler results in the order the clauses were written. A `.with` that lists several patterns is still one clause: if any of those patterns matches, its handler runs once.
+
+`.otherwise(handler)` runs the default handler only when no clause matched, and returns a one-element list. It does not throw. When any clause matched, the default handler is skipped.
+
+`.exhaustive()` and `.run()` return the list. If no clause matched they throw `NonExhaustiveError`, unless you pass a fallback to `.exhaustive()`. That fallback's return value is wrapped in a one-element list.
+
+`.tap(callback)` calls `callback` once for each result collected so far, in order. It does not change the list. You can call `.tap` several times, and you can keep chaining `.with`, `.when` and further `.tap` calls after it.
+
+#### Signature
+
+```ts
+function matchEach<TInput, TOutput>(input: TInput): MatchEach<TInput, TOutput>;
+```
+
+#### Example
+
+```ts
+declare const user: { role: string; active: boolean; name: string };
+
+const tags = matchEach(user)
+  .with({ role: 'admin' }, () => 'admin')
+  .with({ active: true }, () => 'active')
+  .with({ name: P.string }, (person) => person.name)
+  .otherwise(() => 'guest');
+```
+
+For an active admin named Ada, `tags` is `['admin', 'active', 'Ada']`.
+
+### `.tap`
+
+```ts
+matchEach(...)
+  .with(...)
+  .tap((result) => console.log(result))
+  .with(...)
+```
+
+Calls `callback` once for each result collected so far, in clause order. The list stays the same and the builder is returned, so the chain continues.
+
+#### Signature
+
+```ts
+function tap(
+  callback: (result: TOutput) => unknown
+): MatchEach<TInput, TOutput>;
+```
 
 ### `.with`
 
