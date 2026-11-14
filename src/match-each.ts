@@ -182,21 +182,18 @@ class ReusableMatchEachExpression<input, output> {
     return this.compile(true);
   }
 
-  toPartial(): (value: input) => output[] | undefined {
+  toPartial(): (value: input) => output[] {
     return this.compile(false);
   }
 
-  private compile(throwIfEmpty: true): (value: input) => output[];
-  private compile(throwIfEmpty: false): (value: input) => output[] | undefined;
-  private compile(
-    throwIfEmpty: boolean
-  ): (value: input) => output[] | undefined {
+  private compile(throwIfEmpty: boolean): (value: input) => output[] {
     const clauses = this.clauses;
     return (value: input) => {
       const results = evaluate(value, clauses);
-      if (results.length > 0) return results;
-      if (throwIfEmpty) throw new NonExhaustiveError(value);
-      return undefined;
+      if (throwIfEmpty && results.length === 0) {
+        throw new NonExhaustiveError(value);
+      }
+      return results;
     };
   }
 }

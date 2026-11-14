@@ -17,8 +17,9 @@ type List<o, inferredOutput> = PickReturnValue<o, inferredOutput>[];
 
 /**
  * Chain shared by the eager `matchEach(value)` builder and the reusable
- * `matchEach<Input>()` builder. `initial` is the value the reusable function
- * accepts. `i` is the input subsequent patterns are checked against.
+ * `matchEach<Input>()` builder. `initial` is the original input type: every
+ * `.with` is checked against it. `i` starts as that same type. `.narrow()`
+ * replaces `i` and clears the handled-case list.
  */
 type MatchEachBuilder<
   i,
@@ -31,14 +32,14 @@ type MatchEachBuilder<
   /**
    * `.with(pattern, handler)` Registers a pattern and a handler function.
    * The handler is called when the pattern matches, even if an earlier
-   * clause already matched.
+   * clause already matched. The pattern is checked against the original input type.
    */
   with<
-    const p extends Pattern<i>,
+    const p extends Pattern<initial>,
     c,
-    value extends MatchedValue<i, InvertPattern<p, i>>
+    value extends MatchedValue<initial, InvertPattern<p, initial>>
   >(
-    pattern: IsNever<p> extends true ? Pattern<i> : p,
+    pattern: IsNever<p> extends true ? Pattern<initial> : p,
     handler: (
       selections: FindSelected<value, p>,
       value: value
@@ -55,11 +56,13 @@ type MatchEachBuilder<
     : never;
 
   with<
-    const p1 extends Pattern<i>,
-    const p2 extends Pattern<i>,
+    const p1 extends Pattern<initial>,
+    const p2 extends Pattern<initial>,
     c,
     p extends p1 | p2,
-    value extends p extends any ? MatchedValue<i, InvertPattern<p, i>> : never
+    value extends p extends any
+      ? MatchedValue<initial, InvertPattern<p, initial>>
+      : never
   >(
     p1: p1,
     p2: p2,
@@ -79,13 +82,13 @@ type MatchEachBuilder<
     : never;
 
   with<
-    const p1 extends Pattern<i>,
-    const p2 extends Pattern<i>,
-    const p3 extends Pattern<i>,
-    const ps extends readonly Pattern<i>[],
+    const p1 extends Pattern<initial>,
+    const p2 extends Pattern<initial>,
+    const p3 extends Pattern<initial>,
+    const ps extends readonly Pattern<initial>[],
     c,
     p extends p1 | p2 | p3 | ps[number],
-    value extends MatchedValue<i, InvertPattern<p, i>>
+    value extends MatchedValue<initial, InvertPattern<p, initial>>
   >(
     ...args: [
       p1: p1,
@@ -122,8 +125,10 @@ type MatchEachBuilder<
     : never;
 
   with<
-    const pat extends Pattern<i>,
-    pred extends (value: MatchedValue<i, InvertPattern<pat, i>>) => unknown,
+    const pat extends Pattern<initial>,
+    pred extends (
+      value: MatchedValue<initial, InvertPattern<pat, initial>>
+    ) => unknown,
     c,
     value extends GuardValue<pred>
   >(
@@ -201,8 +206,9 @@ type MatchEachBuilder<
     : TSPatternError<'calling `.returnType<T>()` is only allowed directly after `matchEach(...)`.'>;
 
   /**
-   * `.narrow()` narrows the input type for later clauses to exclude every
-   * case handled so far. Results already collected stay on the list.
+   * `.narrow()` records every handled case in the input type and clears the
+   * handled-case list. Later `.when`, `.otherwise` and exhaustiveness checks
+   * see that updated input type. Later `.with` clauses still see the original.
    */
   narrow(): MatchEachBuilder<
     DeepExcludeAll<i, handledCases>,
@@ -270,10 +276,10 @@ type ReusableTerminals<
     : never;
 
   /**
-   * `.toPartial()` builds a function that returns the list of results, or
-   * `undefined` when nothing matched. It does not throw.
+   * `.toPartial()` builds a function that returns the list of results.
+   * The list is empty when nothing matched. It does not throw.
    */
-  toPartial(): (value: initial) => List<o, inferredOutput> | undefined;
+  toPartial(): (value: initial) => List<o, inferredOutput>;
 };
 
 /**

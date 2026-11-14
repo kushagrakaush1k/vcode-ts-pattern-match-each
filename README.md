@@ -449,7 +449,7 @@ matchEach(value)
 
 `matchEach` uses the same builder as [`match`](#match): `.with` (one pattern, several patterns, or a pattern plus a guard), `.when`, `.returnType`, `.narrow`, `.otherwise`, `.exhaustive` and `.run`.
 
-Every `.with` and `.when` clause that matches runs, including when an earlier clause already matched. The expression returns a list of handler results in the order the clauses were written. A `.with` that lists several patterns is still one clause: if any of those patterns matches, its handler runs once.
+Every `.with` and `.when` clause that matches runs, including when an earlier clause already matched. Each `.with` is checked against the original input type. `.narrow()` then updates both the handled-case tracking and the input type used by `.when`, `.otherwise` and exhaustiveness checking. The expression returns a list of handler results in the order the clauses were written. A `.with` that lists several patterns is still one clause: if any of those patterns matches, its handler runs once. A missing case makes `.exhaustive()` and `.toExhaustive()` a type error.
 
 `.otherwise(handler)` runs the default handler only when no clause matched, and returns a one-element list. It does not throw. When any clause matched, the default handler is skipped.
 
@@ -485,7 +485,7 @@ Call `matchEach` with a type argument and no value. The chain records clauses in
 
 - `.to()` returns the list and throws `NonExhaustiveError` if nothing matched.
 - `.toExhaustive()` does the same, and TypeScript reports a case that is not covered.
-- `.toPartial()` returns `undefined` if nothing matched and does not throw.
+- `.toPartial()` returns an empty list if nothing matched and does not throw.
 
 `.tap` callbacks run inside that function, once for each result collected so far on that call. Selections are created fresh on every call.
 

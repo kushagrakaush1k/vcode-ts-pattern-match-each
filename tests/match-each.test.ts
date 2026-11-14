@@ -319,6 +319,52 @@ describe('matchEach', () => {
     });
   });
 
+  it('checks every .with against the original input, including after .narrow()', () => {
+    type Input = 'a' | 'b' | 'c';
+    const input = 'a' as Input;
+
+    const result = matchEach(input)
+      .with('a', (value) => {
+        type t = Expect<Equal<typeof value, 'a'>>;
+        return 'a1' as const;
+      })
+      .narrow()
+      .with('a', (value) => {
+        type t = Expect<Equal<typeof value, 'a'>>;
+        return 'a2' as const;
+      })
+      .with('b', () => 'b' as const)
+      .with('c', () => 'c' as const)
+      .exhaustive();
+
+    type test = Expect<Equal<typeof result, ('a1' | 'a2' | 'b' | 'c')[]>>;
+    expect(result).toEqual(['a1', 'a2']);
+
+    matchEach(input)
+      .with('a', () => 'a' as const)
+      .narrow()
+      .with('b', () => 'b' as const)
+      // @ts-expect-error
+      .exhaustive();
+
+    const matchLetter = matchEach<Input>()
+      .with('a', () => 'a1' as const)
+      .narrow()
+      .with('a', () => 'a2' as const)
+      .with('b', () => 'b' as const)
+      .with('c', () => 'c' as const)
+      .toExhaustive();
+
+    expect(matchLetter('a')).toEqual(['a1', 'a2']);
+
+    matchEach<Input>()
+      .with('a', () => 'a' as const)
+      .narrow()
+      .with('b', () => 'b' as const)
+      // @ts-expect-error
+      .toExhaustive();
+  });
+
   it('keeps the original input type so a later clause can match again', () => {
     const input = 'a' as 'a' | 'b';
 
@@ -494,17 +540,15 @@ describe('reusable matchEach', () => {
     expect(() => matchLetter('c' as Letter)).toThrow(NonExhaustiveError);
   });
 
-  it('toPartial returns undefined and does not throw', () => {
+  it('toPartial returns an empty list and does not throw', () => {
     const matchLetter = matchEach<Letter>()
       .with('a', () => 'A' as const)
       .toPartial();
 
-    type test = Expect<
-      Equal<ReturnType<typeof matchLetter>, 'A'[] | undefined>
-    >;
+    type test = Expect<Equal<ReturnType<typeof matchLetter>, 'A'[]>>;
 
     expect(matchLetter('a')).toEqual(['A']);
-    expect(matchLetter('b')).toBeUndefined();
+    expect(matchLetter('b')).toEqual([]);
     expect(() => matchLetter('b')).not.toThrow();
   });
 
@@ -534,7 +578,7 @@ describe('reusable matchEach', () => {
     const full = base.with('b', () => 'B' as const).toExhaustive();
 
     expect(partial('a')).toEqual(['A']);
-    expect(partial('b')).toBeUndefined();
+    expect(partial('b')).toEqual([]);
     expect(full('a')).toEqual(['A']);
     expect(full('b')).toEqual(['B']);
   });
