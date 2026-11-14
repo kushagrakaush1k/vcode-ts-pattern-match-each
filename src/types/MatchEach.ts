@@ -1,3 +1,4 @@
+import type * as symbols from '../internals/symbols';
 import type { Pattern, MatchedValue } from './Pattern';
 import type { InvertPatternForExclude, InvertPattern } from './InvertPattern';
 import type { Union, GuardValue, IsNever } from './helpers';
@@ -12,16 +13,20 @@ interface TSPatternError<i> {
   __nonExhaustive: never;
 }
 
+type List<o, inferredOutput> = PickReturnValue<o, inferredOutput>[];
+
 /**
- * #### MatchEach
- * An interface to create a pattern matching expression that runs every
- * matching clause and collects the results in clause order.
+ * Chain shared by the eager `matchEach(value)` builder and the reusable
+ * `matchEach<Input>()` builder. `initial` is the value the reusable function
+ * accepts. `i` is the input subsequent patterns are checked against.
  */
-export type MatchEach<
+type MatchEachBuilder<
   i,
   o,
-  handledCases extends any[] = [],
-  inferredOutput = never
+  handledCases extends any[],
+  inferredOutput,
+  reuse extends boolean,
+  initial = i
 > = {
   /**
    * `.with(pattern, handler)` Registers a pattern and a handler function.
@@ -39,7 +44,14 @@ export type MatchEach<
       value: value
     ) => PickReturnValue<o, c>
   ): InvertPatternForExclude<p, value> extends infer excluded
-    ? MatchEach<i, o, [...handledCases, excluded], Union<inferredOutput, c>>
+    ? MatchEachBuilder<
+        i,
+        o,
+        [...handledCases, excluded],
+        Union<inferredOutput, c>,
+        reuse,
+        initial
+      >
     : never;
 
   with<
@@ -56,11 +68,13 @@ export type MatchEach<
     InvertPatternForExclude<p1, value>,
     InvertPatternForExclude<p2, value>
   ] extends [infer excluded1, infer excluded2]
-    ? MatchEach<
+    ? MatchEachBuilder<
         i,
         o,
         [...handledCases, excluded1, excluded2],
-        Union<inferredOutput, c>
+        Union<inferredOutput, c>,
+        reuse,
+        initial
       >
     : never;
 
@@ -91,7 +105,7 @@ export type MatchEach<
     infer excluded3,
     infer excludedRest
   ]
-    ? MatchEach<
+    ? MatchEachBuilder<
         i,
         o,
         [
@@ -101,7 +115,9 @@ export type MatchEach<
           excluded3,
           ...Extract<excludedRest, any[]>
         ],
-        Union<inferredOutput, c>
+        Union<inferredOutput, c>,
+        reuse,
+        initial
       >
     : never;
 
@@ -118,8 +134,22 @@ export type MatchEach<
       value: value
     ) => PickReturnValue<o, c>
   ): pred extends (value: any) => value is infer narrowed
-    ? MatchEach<i, o, [...handledCases, narrowed], Union<inferredOutput, c>>
-    : MatchEach<i, o, handledCases, Union<inferredOutput, c>>;
+    ? MatchEachBuilder<
+        i,
+        o,
+        [...handledCases, narrowed],
+        Union<inferredOutput, c>,
+        reuse,
+        initial
+      >
+    : MatchEachBuilder<
+        i,
+        o,
+        handledCases,
+        Union<inferredOutput, c>,
+        reuse,
+        initial
+      >;
 
   /**
    * `.when(predicate, handler)` Registers a predicate and a handler.
@@ -130,17 +160,63 @@ export type MatchEach<
     predicate: pred,
     handler: (value: value) => PickReturnValue<o, c>
   ): pred extends (value: any) => value is infer narrowed
-    ? MatchEach<i, o, [...handledCases, narrowed], Union<inferredOutput, c>>
-    : MatchEach<i, o, handledCases, Union<inferredOutput, c>>;
+    ? MatchEachBuilder<
+        i,
+        o,
+        [...handledCases, narrowed],
+        Union<inferredOutput, c>,
+        reuse,
+        initial
+      >
+    : MatchEachBuilder<
+        i,
+        o,
+        handledCases,
+        Union<inferredOutput, c>,
+        reuse,
+        initial
+      >;
 
   /**
    * `.tap(callback)` calls `callback` once for each result collected so far,
    * in clause order. The list is left unchanged and the chain continues.
+   * On a reusable matcher the callback runs when the built function is called.
    */
   tap(
     callback: (result: PickReturnValue<o, inferredOutput>) => unknown
-  ): MatchEach<i, o, handledCases, inferredOutput>;
+  ): MatchEachBuilder<i, o, handledCases, inferredOutput, reuse, initial>;
 
+  /**
+   * `.returnType<T>()` Lets you specify the return type for all of your branches.
+   */
+  returnType: [inferredOutput] extends [never]
+    ? <output>() => MatchEachBuilder<
+        i,
+        output,
+        handledCases,
+        never,
+        reuse,
+        initial
+      >
+    : TSPatternError<'calling `.returnType<T>()` is only allowed directly after `matchEach(...)`.'>;
+
+  /**
+   * `.narrow()` narrows the input type for later clauses to exclude every
+   * case handled so far. Results already collected stay on the list.
+   */
+  narrow(): MatchEachBuilder<
+    DeepExcludeAll<i, handledCases>,
+    o,
+    [],
+    inferredOutput,
+    reuse,
+    initial
+  >;
+} & (reuse extends true
+  ? ReusableTerminals<initial, i, o, handledCases, inferredOutput>
+  : EagerTerminals<i, o, handledCases, inferredOutput>);
+
+type EagerTerminals<i, o, handledCases extends any[], inferredOutput> = {
   /**
    * `.otherwise()` takes a default handler. The handler runs only when no
    * clause matched, and the expression returns a one-element list. When any
@@ -167,27 +243,68 @@ export type MatchEach<
    *
    * ⚠️ calling this function is unsafe, and may throw if no pattern matches your input.
    */
-  run(): PickReturnValue<o, inferredOutput>[];
-
-  /**
-   * `.returnType<T>()` Lets you specify the return type for all of your branches.
-   */
-  returnType: [inferredOutput] extends [never]
-    ? <output>() => MatchEach<i, output, handledCases>
-    : TSPatternError<'calling `.returnType<T>()` is only allowed directly after `matchEach(...)`.'>;
-
-  /**
-   * `.narrow()` narrows the input type for later clauses to exclude every
-   * case handled so far. Results already collected stay on the list.
-   */
-  narrow(): MatchEach<DeepExcludeAll<i, handledCases>, o, [], inferredOutput>;
+  run(): List<o, inferredOutput>;
 };
+
+type ReusableTerminals<
+  initial,
+  i,
+  o,
+  handledCases extends any[],
+  inferredOutput
+> = {
+  /**
+   * `.to()` builds a function. The function returns the list of results and
+   * throws if nothing matched.
+   */
+  to(): (value: initial) => List<o, inferredOutput>;
+
+  /**
+   * `.toExhaustive()` builds the same function as `.to()`, and TypeScript
+   * reports any input case that is not covered.
+   */
+  toExhaustive: DeepExcludeAll<i, handledCases> extends infer remainingCases
+    ? [remainingCases] extends [never]
+      ? () => (value: initial) => List<o, inferredOutput>
+      : NonExhaustiveError<remainingCases>
+    : never;
+
+  /**
+   * `.toPartial()` builds a function that returns the list of results, or
+   * `undefined` when nothing matched. It does not throw.
+   */
+  toPartial(): (value: initial) => List<o, inferredOutput> | undefined;
+};
+
+/**
+ * #### MatchEach
+ * Builder returned by `matchEach(value)`.
+ */
+export type MatchEach<
+  i,
+  o,
+  handledCases extends any[] = [],
+  inferredOutput = never
+> = MatchEachBuilder<i, o, handledCases, inferredOutput, false>;
+
+/**
+ * #### ReusableMatchEach
+ * Builder returned by `matchEach<Input>()` with no value.
+ * `initial` is the argument type of `.to()`, `.toExhaustive()` and `.toPartial()`.
+ */
+export type ReusableMatchEach<
+  initial,
+  i = initial,
+  o = symbols.unset,
+  handledCases extends any[] = [],
+  inferredOutput = never
+> = MatchEachBuilder<i, o, handledCases, inferredOutput, true, initial>;
 
 /**
  * Overloaded `.exhaustive` for `matchEach`. Both forms return a list.
  */
 type ExhaustiveEach<output, inferredOutput> = {
-  (): PickReturnValue<output, inferredOutput>[];
+  (): List<output, inferredOutput>;
   <otherOutput>(
     handler: (unexpectedValue: unknown) => PickReturnValue<output, otherOutput>
   ): PickReturnValue<output, Union<inferredOutput, otherOutput>>[];

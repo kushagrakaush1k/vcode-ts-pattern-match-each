@@ -143,6 +143,25 @@ describe('matchEach', () => {
     ).toEqual([1]);
   });
 
+  it('does not keep selections from a pattern that failed', () => {
+    expect(
+      matchEach({ a: 1, b: 2 } as { a: number; b: number })
+        .with(
+          { a: P.select('a'), b: 0 },
+          { b: P.select('b') },
+          (selected) => selected
+        )
+        .run()
+    ).toEqual([{ b: 2 }]);
+
+    expect(
+      matchEach({ a: 1, b: 2 } as { a: number; b: number })
+        .with({ a: P.select('a'), b: 0 }, (selected) => selected)
+        .with({ b: P.select('b') }, (selected) => selected)
+        .run()
+    ).toEqual([{ b: 2 }]);
+  });
+
   describe('otherwise', () => {
     it('uses the default only when nothing matched and does not throw', () => {
       const calls: string[] = [];
@@ -417,5 +436,173 @@ describe('matchEach', () => {
         })
         .otherwise(() => 'x');
     });
+  });
+
+  it('treats a passed undefined as a value', () => {
+    expect(
+      matchEach(undefined)
+        .with(undefined, () => 'u')
+        .run()
+    ).toEqual(['u']);
+  });
+});
+
+describe('reusable matchEach', () => {
+  type Letter = 'a' | 'b';
+
+  it('builds one matcher and runs it on many values', () => {
+    let runs = 0;
+    const matchLetter = matchEach<Letter>()
+      .with('a', () => {
+        runs += 1;
+        return 'A' as const;
+      })
+      .with('b', () => 'B' as const)
+      .with(P.union('a', 'b'), () => 'letter' as const)
+      .toExhaustive();
+
+    type test = Expect<
+      Equal<typeof matchLetter, (value: Letter) => ('A' | 'B' | 'letter')[]>
+    >;
+
+    expect(matchLetter('a')).toEqual(['A', 'letter']);
+    expect(matchLetter('b')).toEqual(['B', 'letter']);
+    expect(runs).toBe(1);
+  });
+
+  it('to throws when nothing matched', () => {
+    const matchLetter = matchEach<Letter>()
+      .with('a', () => 'A')
+      .to();
+
+    expect(matchLetter('a')).toEqual(['A']);
+    expect(() => matchLetter('b')).toThrow(NonExhaustiveError);
+  });
+
+  it('toExhaustive requires every case', () => {
+    matchEach<Letter>()
+      .with('a', () => 'A')
+      // @ts-expect-error
+      .toExhaustive();
+
+    const matchLetter = matchEach<Letter>()
+      .with('a', () => 'A' as const)
+      .with('b', () => 'B' as const)
+      .toExhaustive();
+
+    expect(matchLetter('b')).toEqual(['B']);
+    expect(() => matchLetter('c' as Letter)).toThrow(NonExhaustiveError);
+  });
+
+  it('toPartial returns undefined and does not throw', () => {
+    const matchLetter = matchEach<Letter>()
+      .with('a', () => 'A' as const)
+      .toPartial();
+
+    type test = Expect<
+      Equal<ReturnType<typeof matchLetter>, 'A'[] | undefined>
+    >;
+
+    expect(matchLetter('a')).toEqual(['A']);
+    expect(matchLetter('b')).toBeUndefined();
+    expect(() => matchLetter('b')).not.toThrow();
+  });
+
+  it('runs taps inside the built function, once per call', () => {
+    const seen: string[] = [];
+    const matchLetter = matchEach<Letter>()
+      .with('a', () => 'A')
+      .with('b', () => 'B')
+      .tap((result) => seen.push(`1:${result}`))
+      .tap((result) => seen.push(`2:${result}`))
+      .with(P._, () => 'all')
+      .tap((result) => seen.push(`3:${result}`))
+      .toExhaustive();
+
+    expect(seen).toEqual([]);
+    expect(matchLetter('a')).toEqual(['A', 'all']);
+    expect(seen).toEqual(['1:A', '2:A', '3:A', '3:all']);
+
+    seen.length = 0;
+    expect(matchLetter('b')).toEqual(['B', 'all']);
+    expect(seen).toEqual(['1:B', '2:B', '3:B', '3:all']);
+  });
+
+  it('keeps an earlier builder unchanged', () => {
+    const base = matchEach<Letter>().with('a', () => 'A' as const);
+    const partial = base.toPartial();
+    const full = base.with('b', () => 'B' as const).toExhaustive();
+
+    expect(partial('a')).toEqual(['A']);
+    expect(partial('b')).toBeUndefined();
+    expect(full('a')).toEqual(['A']);
+    expect(full('b')).toEqual(['B']);
+  });
+
+  it('supports guards, when, returnType and narrow', () => {
+    const matchNumber = matchEach<number>()
+      .returnType<string>()
+      .with(
+        P.number,
+        (n) => n > 0,
+        () => 'positive'
+      )
+      .when(
+        (n) => n > 10,
+        () => 'gt10'
+      )
+      .with(P.number, () => 'number')
+      .to();
+
+    type test = Expect<Equal<ReturnType<typeof matchNumber>, string[]>>;
+    expect(matchNumber(20)).toEqual(['positive', 'gt10', 'number']);
+    expect(matchNumber(-1)).toEqual(['number']);
+
+    type Input = { prop?: 1 | 2 | 3 };
+    const matchProp = matchEach<Input>()
+      .with({ prop: P.nullish.optional() }, () => 'missing' as const)
+      .with({ prop: 2 }, () => 'two' as const)
+      .narrow()
+      .with({ prop: 1 }, (value) => {
+        type narrowed = Expect<Equal<typeof value.prop, 1>>;
+        return 'one' as const;
+      })
+      .with({ prop: 3 }, () => 'three' as const)
+      .toExhaustive();
+
+    type param = Expect<Equal<Parameters<typeof matchProp>[0], Input>>;
+    expect(matchProp({})).toEqual(['missing']);
+    expect(matchProp({ prop: 2 })).toEqual(['two']);
+    expect(matchProp({ prop: 1 })).toEqual(['one']);
+    expect(matchProp({ prop: 3 })).toEqual(['three']);
+  });
+
+  it('gives each call and each clause its own selections', () => {
+    const seen: unknown[] = [];
+    const matchPoint = matchEach<{ a: number; b: number }>()
+      .with({ a: P.select('a'), b: 0 }, (selected) => selected)
+      .with({ a: P.select('a') }, (selected) => {
+        seen.push(selected);
+        return selected;
+      })
+      .with({ b: P.select('b') }, (selected) => {
+        seen.push(selected);
+        return selected;
+      })
+      .to();
+
+    expect(matchPoint({ a: 1, b: 2 })).toEqual([{ a: 1 }, { b: 2 }]);
+    expect(matchPoint({ a: 3, b: 4 })).toEqual([{ a: 3 }, { b: 4 }]);
+    expect(seen).toEqual([{ a: 1 }, { b: 2 }, { a: 3 }, { b: 4 }]);
+
+    const matchEither = matchEach<{ a: number; b: number }>()
+      .with(
+        { a: P.select('a'), b: 0 },
+        { b: P.select('b') },
+        (selected) => selected
+      )
+      .to();
+
+    expect(matchEither({ a: 1, b: 2 })).toEqual([{ b: 2 }]);
   });
 });

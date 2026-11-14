@@ -50,7 +50,7 @@ Write **better** and **safer conditions**. Pattern matching lets you express com
 - Pattern-match on **any data structure**: nested [Objects](#objects), [Arrays](#tuples-arrays), [Tuples](#tuples-arrays), [Sets](#pset-patterns), [Maps](#pmap-patterns) and all primitive types.
 - **Typesafe**, with helpful [type inference](#type-inference).
 - **Exhaustiveness checking** support, enforcing that you are matching every possible case with [`.exhaustive()`](#exhaustive).
-- **Collect every match** with [`matchEach`](#matcheach). Every clause that fits runs, and the expression returns those results in the order the clauses were written.
+- **Collect every match** with [`matchEach`](#matcheach). Every clause that fits runs, and the expression returns those results in the order the clauses were written. Call `matchEach<Input>()` with no value to build that matcher once and reuse it.
 - Use [patterns](#patterns) to **validate** the shape of your data with [`isMatching`](#ismatching).
 - **Expressive API**, with catch-all and type specific **wildcards**: [`P._`](#p_-wildcard), [`P.string`](#pstring-wildcard), [`P.number`](#pnumber-wildcard), etc.
 - Supports [**predicates**](#pwhen-patterns), [**unions**](#punion-patterns), [**intersections**](#pintersection-patterns) and [**exclusion**](#pnot-patterns) patterns for non-trivial cases.
@@ -476,6 +476,33 @@ const tags = matchEach(user)
 ```
 
 For an active admin named Ada, `tags` is `['admin', 'active', 'Ada']`.
+
+`P.select` values are computed for the clause that matched. A selection recorded while a pattern fails is discarded, so it never shows up in a later clause.
+
+#### Reusable matcher
+
+Call `matchEach` with a type argument and no value. The chain records clauses instead of running them. Finish with one of three methods. Each one returns a function you can call many times:
+
+- `.to()` returns the list and throws `NonExhaustiveError` if nothing matched.
+- `.toExhaustive()` does the same, and TypeScript reports a case that is not covered.
+- `.toPartial()` returns `undefined` if nothing matched and does not throw.
+
+`.tap` callbacks run inside that function, once for each result collected so far on that call. Selections are created fresh on every call.
+
+```ts
+const tagsOf = matchEach<{ role: string; active: boolean; name: string }>()
+  .with({ role: 'admin' }, () => 'admin')
+  .with({ active: true }, () => 'active')
+  .with({ name: P.string }, (person) => person.name)
+  .tap((tag) => console.log(tag))
+  .toPartial();
+
+tagsOf({ role: 'admin', active: true, name: 'Ada' });
+// ['admin', 'active', 'Ada']
+
+tagsOf({ role: 'guest', active: false, name: 'Bea' });
+// ['Bea']
+```
 
 ### `.tap`
 
